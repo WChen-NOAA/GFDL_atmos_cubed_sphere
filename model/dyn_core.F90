@@ -145,6 +145,7 @@ module dyn_core_mod
 #endif
   use fv_regional_mod,     only: dump_field, exch_uv, H_STAGGER, U_STAGGER, V_STAGGER
   use fv_regional_mod,     only: a_step, p_step, k_step, n_step
+  use fv_mapz_mod,         only: map1_ppm
 
 implicit none
 private
@@ -167,7 +168,6 @@ public :: dyn_core, del2_cubed, init_ijk_mem
   real, parameter    ::     rad2deg = 180./pi
 
 contains
-
 !-----------------------------------------------------------------------
 !     dyn_core :: FV Lagrangian dynamics driver
 !-----------------------------------------------------------------------
@@ -180,7 +180,8 @@ contains
                      u,  v,  w, delz, pt, q, delp, pe, pk, phis, ws, omga, ptop, pfull, ua, va, &
                      uc, vc, mfx, mfy, cx, cy, pkz, peln, q_con, ak, bk, &
                      ks, gridstruct, flagstruct, neststruct, idiag, bd, domain, &
-                     init_step, i_pack, end_step, diss_est,time_total)
+                     init_step, i_pack, end_step, diss_est, pdc_in, time_total, pt_tend, delp_save, &
+                     u_tend, v_tend)
 
     integer, intent(IN) :: npx
     integer, intent(IN) :: npy
@@ -192,6 +193,7 @@ contains
     real   , intent(IN) :: ptop
     logical, intent(IN) :: hydrostatic
     logical, intent(IN) :: init_step, end_step
+    logical, intent(IN) :: pdc_in
     real, intent(in) :: pfull(npz)
     real, intent(in),     dimension(npz+1) :: ak, bk
     integer, intent(IN) :: ks
@@ -199,6 +201,8 @@ contains
     type(fv_grid_bounds_type), intent(IN) :: bd
     real, intent(inout), dimension(bd%isd:bd%ied  ,bd%jsd:bd%jed+1,npz):: u  !< D grid zonal wind (m/s)
     real, intent(inout), dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed  ,npz):: v  !< D grid meridional wind (m/s)
+    real, intent(in), optional, dimension(bd%isd:bd%ied  ,bd%jsd:bd%jed+1,npz):: u_tend 
+    real, intent(in), optional, dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed  ,npz):: v_tend
     real, intent(inout) :: w(   bd%isd:,bd%jsd:,1:)  !< vertical vel. (m/s)
     real, intent(inout) ::  delz(bd%is:,bd%js:,1:)  !< delta-height (m, negative)
     real, intent(inout) :: cappa(bd%isd:bd%ied,bd%jsd:bd%jed,1:npz)  !< moist kappa
@@ -208,7 +212,9 @@ contains
     real, intent(inout) :: pt(  bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz)  !< potential temperature (K)
     real, intent(inout) :: delp(bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz)  !< pressure thickness (pascal)
     real, intent(inout) :: q(   bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz, nq)  !
-    real, intent(in), optional:: time_total  !< total time (seconds) since start
+    real, intent(in), optional :: time_total  !< total time (seconds) since start
+    real, intent(in), optional :: pt_tend(bd%isd:bd%ied,bd%jsd:bd%jed,npz)  
+    real, intent(in), optional :: delp_save(bd%isd:bd%ied,bd%jsd:bd%jed,npz)
     real, intent(inout) :: diss_est(bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz)  !< skeb dissipation estimate
 
 !-----------------------------------------------------------------------
@@ -251,7 +257,15 @@ contains
     type(fv_diag_type),  intent(IN)            :: idiag
     type(domain2d),      intent(INOUT)         :: domain
 
+    logical :: pdc
     real, allocatable, dimension(:,:,:):: pem, heat_source
+    real, dimension(bd%isd:bd%ied,bd%jsd:bd%jed+1,npz) :: ud_tend_int
+    real, dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed,npz) :: vd_tend_int
+    real, dimension(bd%is:bd%ie,npz+1) :: pe1, pe2
+    real, dimension(bd%is:bd%ie+1,npz+1) :: pe3, pe4
+    ! real, dimension(bd%is:bd%ie+1) :: bc_int
+    real, dimension(bd%is:bd%ie) :: bc_int
+
 ! Auto 1D & 2D arrays:
     real, dimension(bd%isd:bd%ied,bd%jsd:bd%jed):: ws3, z_rat
     real:: dp_ref(npz)
@@ -299,6 +313,9 @@ contains
       ied = bd%ied
       jsd = bd%jsd
       jed = bd%jed
+
+    pdc = pdc_in .and. present(delp_save) .and. present(pt_tend) .and. present(u_tend) .and. present(v_tend)
+    bc_int = 0.
 
 #ifdef SW_DYNAMICS
     peln1 = 0.
@@ -415,6 +432,8 @@ contains
           remap_step = .false.
      endif
 
+
+
      if ( flagstruct%fv_debug ) then
           if(is_master()) write(*,*) 'n_split loop, it=', it
           if ( .not. flagstruct%hydrostatic )    &
@@ -521,9 +540,72 @@ contains
 
                                                      call timing_on('COMM_TOTAL')
      call complete_group_halo_update(i_pack(8), domain)
-     if( .not. hydrostatic )  &
+     if( .not. hydrostatic )then
           call complete_group_halo_update(i_pack(7), domain)
+     endif
                                                      call timing_off('COMM_TOTAL')
+
+
+    if(pdc)then
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,recip_k_split_n_split,pt_tend,delp_save,delp,pt)
+      do k=1,npz
+        do j=js,je
+          do i=is,ie
+            pt(i,j,k) = pt(i,j,k) + recip_k_split_n_split*pt_tend(i,j,k)*delp_save(i,j,k)/delp(i,j,k)
+          enddo
+        enddo
+      enddo
+      call start_group_halo_update(i_pack(1), pt,   domain, complete=.true.)
+
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,u_tend,bc_int,ud_tend_int,&
+!$OMP                                  isd,ied,jsd,jed,v_tend,vd_tend_int,flagstruct) &
+!$OMP                           private(pe1,pe2,pe3,pe4)
+      do j=js,je+1
+        do i=is,ie
+          pe1(i,1) = ptop
+          pe2(i,1) = ptop
+          do k=2,npz+1
+            pe1(i,k) = pe1(i,k-1) + 0.5*(delp_save(i,j-1,k-1)+delp_save(i,j,k-1))
+            pe2(i,k) = pe2(i,k-1) + 0.5*(delp(i,j-1,k-1)+delp(i,j,k-1))
+          enddo
+        enddo
+        call map1_ppm(npz, pe1(is:ie,:), u_tend, bc_int, &
+                      npz, pe2(is:ie,:), ud_tend_int,           &
+                      is, ie, j, isd, ied, jsd, jed+1, -1, flagstruct%kord_mt)
+        if (j < je+1) then        ! Added   
+          do i=is,ie+1
+            pe3(i,1) = ptop
+            pe4(i,1) = ptop
+            do k=2,npz+1
+              pe3(i,k) = pe3(i,k-1) + 0.5*(delp_save(i-1,j,k-1)+delp_save(i,j,k-1))
+              pe4(i,k) = pe4(i,k-1) + 0.5*(delp(i-1,j,k-1)+delp(i,j,k-1))
+            enddo
+          enddo
+          call map1_ppm(npz, pe3, v_tend, bc_int, &
+                        npz, pe4, vd_tend_int,             &
+                        is, ie+1, j, isd, ied+1, jsd, jed, -1, flagstruct%kord_mt)
+        endif
+      enddo
+
+!$OMP parallel do default(none) shared(is,ie,js,je,u,flagstruct,recip_k_split_n_split,ud_tend_int,npz,v,vd_tend_int)
+        do k=1,npz
+          do j=js,je+1
+            do i=is,ie
+              u(i,j,k) = u(i,j,k) + recip_k_split_n_split*ud_tend_int(i,j,k)
+            enddo
+          enddo
+          do j=js,je
+            do i=is,ie+1
+              v(i,j,k) = v(i,j,k) + recip_k_split_n_split*vd_tend_int(i,j,k)
+            enddo
+          enddo
+        enddo
+      call start_group_halo_update(i_pack(8), u, v, domain, gridtype=DGRID_NE)
+
+      call complete_group_halo_update(i_pack(1), domain)
+      call complete_group_halo_update(i_pack(8), domain)
+
+    endif
 
                                                      call timing_on('c_sw')
 !$OMP parallel do default(none) shared(npz,isd,jsd,delpc,delp,ptc,pt,u,v,w,uc,vc,ua,va, &
@@ -539,6 +621,7 @@ contains
                       gridstruct, flagstruct)
       enddo
                                                      call timing_off('c_sw')
+
       if ( flagstruct%nord > 0 ) then
                                                    call timing_on('COMM_TOTAL')
           call start_group_halo_update(i_pack(3), divgd, domain, position=CORNER)
@@ -675,6 +758,7 @@ contains
 
       endif   ! end hydro check
 
+
       call p_grad_c(dt2, npz, delpc, pkc, gz, uc, vc, bd, gridstruct%rdxc, gridstruct%rdyc, hydrostatic)
 
                                                                    call timing_on('COMM_TOTAL')
@@ -771,7 +855,7 @@ contains
 !$OMP                                  is,ie,js,je,isd,ied,jsd,jed,omga,delp,gridstruct,npx,npy,  &
 !$OMP                                  ng,zh,vt,ptc,pt,u,v,w,uc,vc,ua,va,divgd,mfx,mfy,cx,cy,     &
 !$OMP                                  crx,cry,xfx,yfx,q_con,zvir,sphum,nq,q,dt,bd,rdt,iep1,jep1, &
-!$OMP                                  heat_source,diss_est,ptop,first_call)                                      &
+!$OMP                                  heat_source,diss_est,ptop,first_call) &
 !$OMP                          private(nord_k, nord_w, nord_t, damp_w, damp_t, d2_divg,   &
 !$OMP                          d_con_k,kgb, hord_m, hord_v, hord_t, hord_p, wk, heat_s,diss_e, z_rat)
     do k=1,npz
@@ -879,6 +963,7 @@ contains
             enddo
          enddo
        endif
+
        call d_sw(vt(isd,jsd,k), delp(isd,jsd,k), ptc(isd,jsd,k),  pt(isd,jsd,k),      &
                   u(isd,jsd,k),    v(isd,jsd,k),   w(isd:,jsd:,k),  uc(isd,jsd,k),      &
                   vc(isd,jsd,k),   ua(isd,jsd,k),  va(isd,jsd,k), divgd(isd,jsd,k),   &
