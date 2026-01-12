@@ -106,7 +106,9 @@ module fv_mapz_mod
 
   implicit none
   real, parameter:: consv_min= 0.001         !< below which no correction applies
+  real, parameter:: te_min= -1.e25
   real, parameter:: t_min= 184.              !< below which applies stricter constraint
+  real, parameter:: r2=1./2., r0=0.0
   real, parameter:: r3 = 1./3., r23 = 2./3., r12 = 1./12.
   real, parameter:: cv_vap = 3.*rvgas        !< 1384.5
   real, parameter:: cv_air =  cp_air - rdgas !< = rdgas * (7/2-1) = 2.5*rdgas=717.68
@@ -139,7 +141,7 @@ contains
                       ptop, ak, bk, pfull, gridstruct, domain, do_sat_adj, &
                       hydrostatic, phys_hydrostatic, hybrid_z, adiabatic, do_adiabatic_init, &
                       do_inline_mp, inline_mp, c2l_ord, bd, fv_debug, &
-                      moist_phys)
+                      moist_phys, remap_option, gmao_remap, grav_var)
   logical, intent(in):: last_step
   logical, intent(in):: fv_debug
   real,    intent(in):: mdt                   !< remap time step
@@ -207,6 +209,8 @@ contains
   real, intent(out)::     te(isd:ied,jsd:jed,km)
 
   type(inline_mp_type), intent(inout):: inline_mp
+  integer, intent(in) :: remap_option, gmao_remap
+  real, intent(in) :: grav_var(isd:ied,jsd:jed,km)
 
 ! !DESCRIPTION:
 !
@@ -222,17 +226,86 @@ contains
   real, dimension(isd:ied,jsd:jed,km):: pe4
   real, dimension(is:ie+1,km+1):: pe0, pe3
   real, dimension(is:ie):: gsize, gz, cvm, qv
-
-  real rcp, rg, rrg, bkh, dtmp, k1k
+  real, dimension(is:ie,js:je,km) :: rrg
+  real rcp, rg, bkh, dtmp, k1k
   integer:: i,j,k
   integer:: kdelz
   integer:: nt, liq_wat, ice_wat, rainwat, snowwat, cld_amt, graupel, hailwat, ccn_cm3, iq, n, kp, k_next
   integer :: ierr
 
+  logical:: remap_t, remap_pt, remap_te ! Adding GMAO remapping options
+
+
+  remap_t  = .false.
+  remap_pt = .false.
+  remap_te = .false.
+  select case (remap_option)
+  case(0)
+    remap_t  = .true.
+  case(1)
+    remap_pt = .true.
+  case(2)
+    remap_te = .true.
+  case default
+    print*, ' INVALID REMAP_OPTION '
+    stop
+  end select
+
+  select case (gmao_remap)
+  case(0)
+    ! use GFDL schemes
+  case(1)
+    ! GMAO linear remap
+  case(2)
+    ! GMAO quadratic remap
+  case(3)
+    ! GMAO cubic remap
+  case default
+    print*, ' INVALID GMAO_REMAP'
+    stop
+  end select
+
+  if (is_master() .and. fv_debug) then
+     print*, ''
+     select case (remap_option)
+     case(0)
+     print*, ' REMAPPING  T in logP'
+     case(1)
+     print*, ' REMAPPING PT in P'
+     case(2)
+     print*, ' REMAPPING TE in logP'
+     end select
+
+     print*, ''
+     select case (gmao_remap)
+     case(0)
+     print*, ' Using GFDL schemes'
+     case(1)
+     print*, ' Using GMAO linear scheme'
+     case(2)
+     print*, ' Using GMAO quadratic scheme'
+     case(3)
+     print*, ' Using GMAO cubic scheme'
+     end select
+
+   ! Total eergy conservation
+     print*, ''
+     print*, ' REMAPPING CONSV:     ', consv
+     print*, ' REMAPPING CONSV_MIN: ', consv_min
+     print*, ''
+  endif
+
        k1k = rdgas/cv_air   ! akap / (1.-akap) = rg/Cv=0.4
         rg = rdgas
        rcp = 1./ cp
-       rrg = -rdgas/grav
+
+       do k=1,km
+         do j=js,je
+           do i=is,ie
+             rrg(i,j,k) = -rdgas/grav_var(i,j,k)
+           enddo
+         enddo
+       enddo
 
        liq_wat = get_tracer_index (MODEL_ATMOS, 'liq_wat')
        ice_wat = get_tracer_index (MODEL_ATMOS, 'ice_wat')
@@ -255,7 +328,8 @@ contains
 #ifdef MULTI_GASES
 !$OMP                                  num_gas,                                          &
 #endif
-!$OMP                                  hs,w,ws,kord_wz,omga,rrg,kord_mt,pe4)    &
+!$OMP                                  hs,w,ws,kord_wz,omga,rrg,kord_mt,pe4,remap_t,remap_pt, &
+!$OMP                                  remap_te,remap_option,gmao_remap)    &
 !$OMP                          private(qv,gz,cvm,kp,k_next,bkh,dp2,   &
 !$OMP                                  pe0,pe1,pe2,pe3,pk1,pk2,pn2,phis,q2,w2)
   do 1000 j=js,je+1
@@ -300,17 +374,17 @@ contains
 #else
                      cappa(i,j,k) = rdgas / ( rdgas + cvm(i)/(1.+r_vir*q(i,j,k,sphum)) )
 #endif
-                     pt(i,j,k) = pt(i,j,k)*exp(cappa(i,j,k)/(1.-cappa(i,j,k))*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+                     pt(i,j,k) = pt(i,j,k)*exp(cappa(i,j,k)/(1.-cappa(i,j,k))*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
                   enddo
 #else
                   do i=is,ie
 #ifdef MULTI_GASES
-                     pt(i,j,k) = pt(i,j,k)*exp(k1k*(virqd(q(i,j,k,1:num_gas))/vicvqd(q(i,j,k,1:num_gas))*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+                     pt(i,j,k) = pt(i,j,k)*exp(k1k*(virqd(q(i,j,k,1:num_gas))/vicvqd(q(i,j,k,1:num_gas))*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #else
-                     pt(i,j,k) = pt(i,j,k)*exp(k1k*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+                     pt(i,j,k) = pt(i,j,k)*exp(k1k*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #endif
 ! Using dry pressure for the definition of the virtual potential temperature
-!                    pt(i,j,k) = pt(i,j,k)*exp(k1k*log(rrg*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*    &
+!                    pt(i,j,k) = pt(i,j,k)*exp(k1k*log(rrg(i,j,k)*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*    &
 !                                              pt(i,j,k)/(1.+r_vir*q(i,j,k,sphum))))
                   enddo
 #endif
@@ -390,18 +464,47 @@ contains
       enddo
    enddo
 
-   if ( kord_tm<0 ) then
+   if (remap_t) then
 !----------------------------------
-! Map t using logp
+! map T in log P
 !----------------------------------
+      if ( gmao_remap > 0 ) then
+         call map1_gmao (km,   pe1,  pt,       &
+                         km,   pe2,  pt,       &
+                         is, ie, j, isd, ied, jsd, jed, akap, gmao_remap, T_VAR=3, conserv=.false.)
+      else
          call map_scalar(km,  peln(is,1,j),  pt, gz,   &
                          km,  pn2,           pt,              &
                          is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm), t_min)
-   else
-! Map pt using pe
+      endif
+
+   elseif (remap_pt) then
+!------------------------------------
+! map PT in P^KAPPA
+!------------------------------------
+      if ( gmao_remap > 0 ) then
+         call map1_gmao (km,   pe1,  pt,       &
+                         km,   pe2,  pt,       &
+                         is, ie, j, isd, ied, jsd, jed, akap, gmao_remap, T_VAR=2, conserv=.false.)
+      else
          call map1_ppm (km,  pe1,  pt,  gz,       &
                         km,  pe2,  pt,                  &
                         is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm))
+      endif
+
+   elseif (remap_te) then
+!----------------------------------
+! map TE in log P
+!----------------------------------
+      if ( gmao_remap > 0 ) then
+         call map1_gmao (km,   pe1,  te,       &
+                         km,   pe2,  te,       &
+                         is, ie, j, isd, ied, jsd, jed, akap, gmao_remap, T_VAR=1, conserv=.true.)
+      else
+         call map_scalar(km,  peln(is,1,j),  te, gz,   &
+                         km,  pn2,           te,              &
+                         is, ie, j, isd, ied, jsd, jed, 1, abs(kord_tm), te_min)
+      endif
    endif
 
 !----------------
@@ -551,28 +654,28 @@ contains
 #else
                cappa(i,j,k) = rdgas / ( rdgas + cvm(i)/(1.+r_vir*q(i,j,k,sphum)) )
 #endif
-               pkz(i,j,k) = exp(cappa(i,j,k)*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+               pkz(i,j,k) = exp(cappa(i,j,k)*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
             enddo
 #else
          if ( kord_tm < 0 ) then
            do i=is,ie
 #ifdef MULTI_GASES
-              pkz(i,j,k) = exp(akap*virqd(q(i,j,k,1:num_gas))/vicpqd(q(i,j,k,1:num_gas))*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+              pkz(i,j,k) = exp(akap*virqd(q(i,j,k,1:num_gas))/vicpqd(q(i,j,k,1:num_gas))*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #else
-              pkz(i,j,k) = exp(akap*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+              pkz(i,j,k) = exp(akap*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #endif
 ! Using dry pressure for the definition of the virtual potential temperature
-!             pkz(i,j,k) = exp(akap*log(rrg*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)/(1.+r_vir*q(i,j,k,sphum))))
+!             pkz(i,j,k) = exp(akap*log(rrg(i,j,k)*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)/(1.+r_vir*q(i,j,k,sphum))))
            enddo
          else
            do i=is,ie
 #ifdef MULTI_GASES
-              pkz(i,j,k) = exp(k1k*virqd(q(i,j,k,1:num_gas))/vicvqd(q(i,j,k,1:num_gas))*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+              pkz(i,j,k) = exp(k1k*virqd(q(i,j,k,1:num_gas))/vicvqd(q(i,j,k,1:num_gas))*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #else
-              pkz(i,j,k) = exp(k1k*log(rrg*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
+              pkz(i,j,k) = exp(k1k*log(rrg(i,j,k)*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)))
 #endif
 ! Using dry pressure for the definition of the virtual potential temperature
-!             pkz(i,j,k) = exp(k1k*log(rrg*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)/(1.+r_vir*q(i,j,k,sphum))))
+!             pkz(i,j,k) = exp(k1k*log(rrg(i,j,k)*(1.-q(i,j,k,sphum))*delp(i,j,k)/delz(i,j,k)*pt(i,j,k)/(1.+r_vir*q(i,j,k,sphum))))
            enddo
            if ( last_step .and. (.not.adiabatic) ) then
               do i=is,ie
@@ -669,7 +772,7 @@ contains
 !$OMP                               ng,gridstruct,E_Flux,pdt,dtmp,reproduce_sum,q,             &
 !$OMP                               mdt,cld_amt,cappa,dtdt,out_dt,rrg,akap,do_sat_adj,         &
 !$OMP                               kord_tm, pe4,npx,npy, ccn_cm3,                             &
-!$OMP                               u_dt,v_dt,c2l_ord,bd,dp0,ps,cdata,GFDL_interstitial)       &
+!$OMP                               u_dt,v_dt,c2l_ord,bd,dp0,ps,cdata,GFDL_interstitial,grav_var)&
 !$OMP                        shared(ccpp_suite)                                                &
 #ifdef MULTI_GASES
 !$OMP                        shared(num_gas)                                                   &
@@ -718,7 +821,7 @@ if( last_step .and. (.not.do_adiabatic_init)  ) then
            enddo
            do k=km,1,-1
               do i=is,ie
-                 phis(i,k) = phis(i,k+1) - grav*delz(i,j,k)
+                 phis(i,k) = phis(i,k+1) - grav_var(i,j,k)*delz(i,j,k)
               enddo
            enddo
 
@@ -913,7 +1016,7 @@ endif        ! end last_step check
                                  u, v, w, delz, pt, delp, q, qc, pe, peln, hs, &
                                  rsin2_l, cosa_s_l, &
                                  r_vir,  cp, rg, hlv, te_2d, ua, va, teq, &
-                                 moist_phys, nwat, sphum, liq_wat, rainwat, ice_wat, snowwat, graupel, hailwat, hydrostatic, id_te)
+                                 moist_phys, nwat, sphum, liq_wat, rainwat, ice_wat, snowwat, graupel, hailwat, hydrostatic, id_te, grav_var)
 !------------------------------------------------------
 ! Compute vertically integrated total energy per column
 !------------------------------------------------------
@@ -935,6 +1038,7 @@ endif        ! end last_step check
    real, intent(in) :: rsin2_l(isd:ied, jsd:jed)
    real, intent(in) :: cosa_s_l(isd:ied, jsd:jed)
    logical, intent(in):: moist_phys, hydrostatic
+   real, intent(in) :: grav_var(is:ie,js:je,km)
 !! Output:
    real, intent(out):: te_2d(is:ie,js:je)   !< vertically integrated TE
    real, intent(out)::   teq(is:ie,js:je)   !< Moist TE
@@ -954,7 +1058,7 @@ endif        ! end last_step check
 #ifdef MULTI_GASES
 !$OMP                                  num_gas,                                           &
 #endif
-!$OMP                                  q,nwat,liq_wat,rainwat,ice_wat,snowwat,graupel,hailwat,sphum)   &
+!$OMP                                  q,nwat,liq_wat,rainwat,ice_wat,snowwat,graupel,hailwat,sphum,grav_var)   &
 !$OMP                          private(phiz, tv, cvm, qd)
   do j=js,je
 
@@ -990,7 +1094,7 @@ endif        ! end last_step check
      do i=is,ie
         phiz(i,km+1) = hs(i,j)
         do k=km,1,-1
-           phiz(i,k) = phiz(i,k+1) - grav*delz(i,j,k)
+           phiz(i,k) = phiz(i,k+1) - grav_var(i,j,k)*delz(i,j,k)
         enddo
      enddo
      do i=is,ie
@@ -3644,5 +3748,232 @@ endif        ! end last_step check
   end select
 
  end subroutine moist_cp
+
+!-----------------------------------------------------------------------
+!BOP
+! !ROUTINE:  map1_gmao --- GMAO Interpolation for vertical re-mapping
+!
+! !INTERFACE:
+  subroutine map1_gmao( km,   pe1,    q1,                 &
+                        kn,   pe2,    q2,   i1, i2,       &
+                        j,    ibeg, iend, jbeg, jend, akap, gmao_remap, T_VAR, conserv)
+      implicit none
+
+! !INPUT PARAMETERS:
+      integer, intent(in) :: i1                ! Starting longitude
+      integer, intent(in) :: i2                ! Finishing longitude
+      real, intent(in) :: akap
+      integer, intent(in) :: T_VAR             ! Thermodynamic variable to remap
+                                               ! 1:TE  2:T  3:PT
+      integer, intent(in) :: gmao_remap        ! 3:cubic  2:quadratic  1:linear
+      logical, intent(in) :: conserv
+      integer, intent(in) :: j                 ! Current latitude
+      integer, intent(in) :: ibeg, iend, jbeg, jend
+      integer, intent(in) :: km                ! Original vertical dimension
+      integer, intent(in) :: kn                ! Target vertical dimension
+
+      real, intent(in) ::  pe1(i1:i2,km+1)  ! pressure at layer edges
+                                               ! (from model top to bottom surface)
+                                               ! in the original vertical coordinate
+      real, intent(in) ::  pe2(i1:i2,kn+1)  ! pressure at layer edges
+                                               ! (from model top to bottom surface)
+                                               ! in the new vertical coordinate
+
+      real, intent(in) ::    q1(ibeg:iend,jbeg:jend,km) ! Field input
+! !INPUT/OUTPUT PARAMETERS:
+      real, intent(inout)::  q2(ibeg:iend,jbeg:jend,kn) ! Field output
+
+! !DESCRIPTION:
+!
+!     Perform Cubic Interpolation a given latitude
+! pe1: pressure at layer edges (from model top to bottom surface)
+!      in the original vertical coordinate
+! pe2: pressure at layer edges (from model top to bottom surface)
+!      in the new vertical coordinate
+!
+! !REVISION HISTORY:
+!    2005.11.14   Takacs    Initial Code
+!    2016.07.20   Putman    Modified to make genaric for any thermodynamic variable
+!
+!EOP
+!-----------------------------------------------------------------------
+!BOC
+!
+! !LOCAL VARIABLES:
+      real       qx(i1:i2,km)
+      real   logpl1(i1:i2,km)
+      real   logpl2(i1:i2,kn)
+      real   dlogp1(i1:i2,km)
+      real    vsum1(i1:i2)
+      real    vsum2(i1:i2)
+      real   am2,am1,ap0,ap1,P,PLP1,PLP0,PLM1,PLM2,DLP0,DLM1,DLM2
+
+      integer i, k, LM2,LM1,LP0,LP1
+
+! Initialization
+! --------------
+
+      select case (T_VAR)
+      case(1)
+       ! Total Energy Remapping in Log(P)
+        do k=1,km
+            qx(:,k) = q1(i1:i2,j,k)
+        logpl1(:,k) = log( r2*(pe1(:,k)+pe1(:,k+1)) )
+        enddo
+        do k=1,kn
+        logpl2(:,k) = log( r2*(pe2(:,k)+pe2(:,k+1)) )
+        enddo
+
+        do k=1,km-1
+        dlogp1(:,k) = logpl1(:,k+1)-logpl1(:,k)
+        enddo
+
+      case(2)
+       ! Temperature Remapping in Log(P)
+        do k=1,km
+            qx(:,k) = q1(i1:i2,j,k)
+        logpl1(:,k) = log( r2*(pe1(:,k)+pe1(:,k+1)) )
+        enddo
+        do k=1,kn
+        logpl2(:,k) = log( r2*(pe2(:,k)+pe2(:,k+1)) )
+        enddo
+
+        do k=1,km-1
+        dlogp1(:,k) = logpl1(:,k+1)-logpl1(:,k)
+        enddo
+
+      case(3)
+       ! Potential Temperature Remapping in P^KAPPA
+        do k=1,km
+            qx(:,k) = q1(i1:i2,j,k)
+        logpl1(:,k) = exp( akap*log( r2*(pe1(:,k)+pe1(:,k+1))) )
+        enddo
+        do k=1,kn
+        logpl2(:,k) = exp( akap*log( r2*(pe2(:,k)+pe2(:,k+1))) )
+        enddo
+
+        do k=1,km-1
+        dlogp1(:,k) = logpl1(:,k+1)-logpl1(:,k)
+        enddo
+
+      end select
+
+      if (conserv) then
+! Compute vertical integral of Input TE
+! -------------------------------------
+        vsum1(:) = r0
+        do i=i1,i2
+        do k=1,km
+        vsum1(i) = vsum1(i) + qx(i,k)*( pe1(i,k+1)-pe1(i,k) )
+        enddo
+        vsum1(i) = vsum1(i) / ( pe1(i,km+1)-pe1(i,1) )
+        enddo
+
+      endif
+
+! Interpolate TE onto target Pressures
+! ------------------------------------
+      do i=i1,i2
+      do k=1,kn
+         LM1 = 1
+         LP0 = 1
+         do while( LP0.le.km )
+            if (logpl1(i,LP0).lt.logpl2(i,k)) then
+               LP0 = LP0+1
+            else
+               exit
+            endif
+         enddo
+         LM1 = max(LP0-1,1)
+         LP0 = min(LP0, km)
+
+! Extrapolate Linearly in LogP above first model level
+! ----------------------------------------------------
+         if( LM1.eq.1 .and. LP0.eq.1 ) then
+             q2(i,j,k) = qx(i,1) + ( qx(i,2)-qx(i,1) )*( logpl2(i,k)-logpl1(i,1) ) &
+                                                      /( logpl1(i,2)-logpl1(i,1) )
+
+! Extrapolate Linearly in LogP below last model level
+! ---------------------------------------------------
+         else if( LM1.eq.km .and. LP0.eq.km ) then
+             q2(i,j,k) = qx(i,km) + ( qx(i,km)-qx(i,km-1) )*( logpl2(i,k )-logpl1(i,km  ) ) &
+                                                           /( logpl1(i,km)-logpl1(i,km-1) )
+
+! Interpolate Linearly in LogP between levels 1 => 2 and km-1 => km
+! -----------------------------------------------------------------
+         else if( LM1.eq.1 .or. LP0.eq.km ) then
+             q2(i,j,k) = qx(i,LP0) + ( qx(i,LM1)-qx(i,LP0) )*( logpl2(i,k  )-logpl1(i,LP0) ) &
+                                                            /( logpl1(i,LM1)-logpl1(i,LP0) )
+! Interpolate Cubicly in LogP between other model levels
+! ------------------------------------------------------
+         else
+              LP1 = LP0+1
+              LM2 = LM1-1
+             P    = logpl2(i,k)
+             PLP1 = logpl1(i,LP1)
+             PLP0 = logpl1(i,LP0)
+             PLM1 = logpl1(i,LM1)
+             PLM2 = logpl1(i,LM2)
+             DLP0 = dlogp1(i,LP0)
+             DLM1 = dlogp1(i,LM1)
+             DLM2 = dlogp1(i,LM2)
+
+           ! Cubic Coefficients
+           ! ------------------
+             if( gmao_remap .eq. 3 ) then
+                 ap1 = (P-PLP0)*(P-PLM1)*(P-PLM2)/( DLP0*(DLP0+DLM1)*(DLP0+DLM1+DLM2) )
+                 ap0 = (PLP1-P)*(P-PLM1)*(P-PLM2)/( DLP0*      DLM1 *(     DLM1+DLM2) )
+                 am1 = (PLP1-P)*(PLP0-P)*(P-PLM2)/( DLM1*      DLM2 *(DLP0+DLM1     ) )
+                 am2 = (PLP1-P)*(PLP0-P)*(PLM1-P)/( DLM2*(DLM1+DLM2)*(DLP0+DLM1+DLM2) )
+                 q2(i,j,k) = ap1*qx(i,LP1) + ap0*qx(i,LP0) + am1*qx(i,LM1) + am2*qx(i,LM2)
+             endif
+
+           ! Quadratic Coefficients
+           ! ----------------------
+             if( gmao_remap .eq. 2 ) then
+                 ap1 = (P-PLP0)*(P-PLM1)/( (PLP1-PLP0)*(PLP1-PLM1) )
+                 ap0 = (PLP1-P)*(P-PLM1)/( (PLP1-PLP0)*(PLP0-PLM1) )
+                 am1 = (PLP1-P)*(PLP0-P)/( (PLP1-PLM1)*(PLP0-PLM1) )
+                 q2(i,j,k) = ap1*qx(i,LP1) + ap0*qx(i,LP0) + am1*qx(i,LM1)
+             endif
+
+           ! Linear Coefficients
+           ! -------------------
+             if( gmao_remap .eq. 1 ) then
+                 q2(i,j,k) = qx(i,LP0) + ( qx(i,LM1)-qx(i,LP0) )*( logpl2(i,k  )-logpl1(i,LP0) ) &
+                                                                /( logpl1(i,LM1)-logpl1(i,LP0) )
+             endif
+
+         endif
+
+      enddo
+      enddo
+      if (conserv) then
+
+! Compute vertical integral of Output TE
+! --------------------------------------
+        vsum2(:) = r0
+        do i=i1,i2
+        do k=1,kn
+        vsum2(i) = vsum2(i) + q2(i,j,k)*( pe2(i,k+1)-pe2(i,k) )
+        enddo
+        vsum2(i) = vsum2(i) / ( pe2(i,kn+1)-pe2(i,1) )
+        enddo
+
+! Adjust Final TE to conserve
+! ---------------------------
+        do i=i1,i2
+        do k=1,kn
+           q2(i,j,k) = q2(i,j,k) + vsum1(i)-vsum2(i)
+!          q2(i,j,k) = q2(i,j,k) * vsum1(i)/vsum2(i)
+        enddo
+        enddo
+
+      endif
+
+      return
+!EOC
+ end subroutine map1_gmao
+!-----------------------------------------------------------------------
 
 end module fv_mapz_mod

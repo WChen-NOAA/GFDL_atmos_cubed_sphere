@@ -763,13 +763,28 @@ module fv_arrays_mod
                                   !< cold-start without any topography; this value is ignored for the aquaplanet
                                   !< test_case = 14. The default is .true. It is highly recommended TO NOT ALTER
                                   !< this value unless you know what you are doing.
-   logical :: remap_t  = .true.  !< Whether the vertical remapping is performed on (virtual) temperature
-                                 !< instead of (virtual) potential temperature. Since typically potential
-                                 !< temperature increases exponentially from layer to layer near the top
-                                 !< boundary, the cubic-spline interpolation in the vertical remapping
+
+   integer :: remap_option = 0   !< Whether the vertical remapping is performed on (virtual) temperature 
+                                 !< instead of (virtual) potential temperature. Since typically potential 
+                                 !< temperature increases exponentially from layer to layer near the top 
+                                 !< boundary, the cubic-spline interpolation in the vertical remapping 
                                  !< will have difficulty with the exponential profile. Temperature
                                  !< does not have this problem and will often yield a more accurate result.
-                                 !< The default is .true.
+                                 !< WMP-NASA-GMAO UPDATE
+                                 !< The default is 0 , options are:
+                                 !<     0: remap  T in logP
+                                 !<     1: remap PT in P
+                                 !<     2: remap TE in logP with GMAO cubic
+                                 !< kord_tm no longer needs to be negative.
+                                 !< WMP-NASA-GMAO UPDATE
+
+   integer :: gmao_remap = 0    !< Whether the vertical remapping uses GFDl or GMAO remap schemes
+                                !<     0: GFDL schemes
+                                !<     1: GMAO linear
+                                !<     2: GMAO quadratic
+                                !<     3: GMAO cubic
+   logical :: md_subcycle = .false. ! Whether do molecular_diffusion subcycling (WAM)
+
    logical :: z_tracer = .false.   !< Whether to transport sub-cycled tracers layer-by-layer,
                                    !< each with its own computed sub-cycling time step (if q_split = 0).
                                    !< This may improve efficiency for very large numbers of tracers.
@@ -936,6 +951,7 @@ module fv_arrays_mod
   logical :: write_restart_with_bcs = .false.   !< Default setting for using DA-updated BC files
   logical :: regional_bcs_from_gsi = .false.    !< Default setting for writing restart files with boundary rows
   logical :: pass_full_omega_to_physics_in_non_hydrostatic_mode = .false.  !< Default to passing local omega to physics in non-hydrostatic 
+  logical :: var_grav = .false.  ! apply variable gravity (4D) to simulations
 
 !This logical variable is used for SA-3D-TKE
      logical :: sa3dtke_dyco = .false.

@@ -358,7 +358,8 @@ module fv_control_mod
      logical , pointer :: fv_timers
      logical , pointer :: srf_init
      logical , pointer :: mountain
-     logical , pointer :: remap_t
+     integer , pointer :: remap_option
+     integer , pointer :: gmao_remap
      logical , pointer :: z_tracer
 
      logical , pointer :: old_divg_damp
@@ -413,6 +414,7 @@ module fv_control_mod
      logical, pointer :: regional
      integer, pointer :: bc_update_interval
      integer, pointer :: nrows_blend
+     logical, pointer :: var_grav
      logical, pointer :: regional_bcs_from_gsi
      logical, pointer :: write_restart_with_bcs
      integer, pointer :: parent_tile, refinement, nestbctype, nestupdate, upoff, nsponge, ioffset, joffset
@@ -882,6 +884,7 @@ module fv_control_mod
        regional                      => Atm%flagstruct%regional
        bc_update_interval            => Atm%flagstruct%bc_update_interval
        nrows_blend                   => Atm%flagstruct%nrows_blend
+       var_grav                      => Atm%flagstruct%var_grav
        regional_bcs_from_gsi         => Atm%flagstruct%regional_bcs_from_gsi
        write_restart_with_bcs        => Atm%flagstruct%write_restart_with_bcs
        reset_eta                     => Atm%flagstruct%reset_eta
@@ -948,7 +951,8 @@ module fv_control_mod
        fv_timers                     => Atm%flagstruct%fv_timers
        srf_init                      => Atm%flagstruct%srf_init
        mountain                      => Atm%flagstruct%mountain
-       remap_t                       => Atm%flagstruct%remap_t
+       remap_option                  => Atm%flagstruct%remap_option
+       gmao_remap                    => Atm%flagstruct%gmao_remap
        z_tracer                      => Atm%flagstruct%z_tracer
        old_divg_damp                 => Atm%flagstruct%old_divg_damp
        fv_land                       => Atm%flagstruct%fv_land
@@ -1104,7 +1108,7 @@ module fv_control_mod
             tau, tau_w, fast_tau_w_sec, tau_h2o, rf_cutoff, rf_cutoff_w, nf_omega, hydrostatic, fv_sg_adj, sg_cutoff, breed_vortex_inline,  &
             sa3dtke_dyco, &
             na_init, nudge_dz, hybrid_z, Make_NH, n_zs_filter, nord_zs_filter, full_zs_filter, reset_eta,         &
-            pnats, dnats, dnrts, a2b_ord, remap_t, p_ref, d2_bg_k1, d2_bg_k2,  &
+            pnats, dnats, dnrts, a2b_ord, remap_option, gmao_remap, p_ref, d2_bg_k1, d2_bg_k2,  &
             c2l_ord, dx_const, dy_const, umax, deglat, deglon, deg_domain,      &
             deglon_start, deglon_stop, deglat_start, deglat_stop, &
             phys_hydrostatic, use_hydro_pressure, make_hybrid_z, old_divg_damp, add_noise, butterfly_effect, &
@@ -1112,7 +1116,7 @@ module fv_control_mod
             nestbctype, nestupdate, upoff, nsponge, s_weight, &
             check_negative, nudge_ic, halo_update_type, gfs_phil, agrid_vel_rst,     &
             do_uni_zfull, adj_mass_vmr, fac_n_spl, fhouri, update_blend, regional, bc_update_interval,  &
-            regional_bcs_from_gsi, write_restart_with_bcs, nrows_blend,  &
+            regional_bcs_from_gsi, write_restart_with_bcs, nrows_blend, var_grav, &
             write_coarse_restart_files,&
             write_coarse_diagnostics,&
             write_only_coarse_intermediate_restarts, &
