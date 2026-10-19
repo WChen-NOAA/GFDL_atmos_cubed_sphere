@@ -144,7 +144,7 @@ contains
                       ptop, ak, bk, pfull, gridstruct, domain, do_sat_adj, &
                       hydrostatic, phys_hydrostatic, hybrid_z, adiabatic, do_adiabatic_init, &
                       do_inline_mp, inline_mp, c2l_ord, bd, fv_debug, &
-                      moist_phys, grav_var, pt_save)
+                      moist_phys, grav_var, pdc_drib, pt_save)
   logical, intent(in):: last_step
   logical, intent(in):: fv_debug
   real,    intent(in):: mdt                   !< remap time step
@@ -175,6 +175,7 @@ contains
   logical, intent(in):: fill                  !< fill negative tracers
   logical, intent(in):: reproduce_sum
   logical, intent(in):: adiabatic, do_adiabatic_init
+  logical, intent(in):: pdc_drib
   real, intent(in) :: ptop
   real, intent(in) :: ak(km+1)
   real, intent(in) :: bk(km+1)
@@ -685,7 +686,7 @@ contains
 !$OMP                               ng,gridstruct,E_Flux,pdt,dtmp,reproduce_sum,q,             &
 !$OMP                               mdt,cld_amt,cappa,dtdt,out_dt,rrg,akap,do_sat_adj,         &
 !$OMP                               kord_tm, pe4,npx,npy, ccn_cm3,                             &
-!$OMP                               u_dt,v_dt,c2l_ord,bd,dp0,ps,GFDL_interstitial,grav_var,pt_save)&
+!$OMP                               u_dt,v_dt,c2l_ord,bd,dp0,ps,GFDL_interstitial,grav_var,pdc_drib,pt_save)&
 !$OMP                        shared(ccpp_suite, errmsg, errflg)                                &
 #ifdef MULTI_GASES
 !$OMP                        shared(num_gas)                                                   &
@@ -848,8 +849,11 @@ endif        ! end last_step check
        ! Output temperature if last_step
 !!!  if ( is_master() ) write(*,*) 'dtmp=', dtmp, nwat
 
-    if(present(pt_save))then
-      ! pt_save = 0.
+!    if(present(pt_save))then
+     if (pdc_drib) then
+      if (is_master()) then
+              print *,'pdc_mapz',pdc_drib
+      endif
 !$OMP do
        do k=1,km
           do j=js,je
@@ -858,6 +862,7 @@ endif        ! end last_step check
              enddo
           enddo
        enddo
+       call mpp_update_domains(pt_save, domain, complete=.true.)
     endif
 
 !$OMP do

@@ -133,7 +133,7 @@ module dyn_core_mod
   use fv_arrays_mod,      only: fv_grid_type, fv_flags_type, fv_nest_type, fv_diag_type, &
                                 fv_grid_bounds_type, R_GRID, fv_nest_BC_type_3d
   use fv_arrays_mod,       only: sa3dtke_type ! for SA-3D-TKE (kyf) (modify for data structure)
-
+  use fv_arrays_mod,      only: pdc_tend_type !pdc_drib
   use boundary_mod,         only: extrapolation_BC,  nested_grid_BC_apply_intT
   use fv_regional_mod,      only: regional_boundary_update
   use fv_regional_mod,      only: current_time_in_seconds, bc_time_interval
@@ -188,8 +188,8 @@ contains
                      sa3dtke_var,    &
                      mfx, mfy, cx, cy, pkz, peln, q_con, ak, bk, &
                      ks, gridstruct, flagstruct, neststruct, idiag, bd, domain, &
-                     init_step, i_pack, end_step, diss_est, pdc_in, time_total, pt_tend, delp_save, &
-                     u_tend, v_tend)
+                     init_step, i_pack, end_step, diss_est, &
+                     pdc_in, time_total, delp_save, pdc_tend)
 
     integer, intent(IN) :: npx
     integer, intent(IN) :: npy
@@ -209,8 +209,8 @@ contains
     type(fv_grid_bounds_type), intent(IN) :: bd
     real, intent(inout), dimension(bd%isd:bd%ied  ,bd%jsd:bd%jed+1,npz):: u  !< D grid zonal wind (m/s)
     real, intent(inout), dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed  ,npz):: v  !< D grid meridional wind (m/s)
-    real, intent(in), optional, dimension(bd%isd:bd%ied  ,bd%jsd:bd%jed+1,npz):: u_tend 
-    real, intent(in), optional, dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed  ,npz):: v_tend
+!    real, intent(in), optional, dimension(bd%isd:bd%ied  ,bd%jsd:bd%jed+1,npz):: u_tend 
+!    real, intent(in), optional, dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed  ,npz):: v_tend
     real, intent(inout) :: w(   bd%isd:,bd%jsd:,1:)  !< vertical vel. (m/s)
     real, intent(inout) ::  delz(bd%is:,bd%js:,1:)  !< delta-height (m, negative)
     real, intent(inout) :: cappa(bd%isd:bd%ied,bd%jsd:bd%jed,1:npz)  !< moist kappa
@@ -222,7 +222,7 @@ contains
     real, intent(inout) :: grav_var_h(bd%isd:bd%ied,bd%jsd:bd%jed,npz+1)  !< variable gravity
     real, intent(inout) :: q(   bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz, nq)  !
     real, intent(in), optional :: time_total  !< total time (seconds) since start
-    real, intent(in), optional :: pt_tend(bd%isd:bd%ied,bd%jsd:bd%jed,npz)  
+!    real, intent(in), optional :: pt_tend(bd%isd:bd%ied,bd%jsd:bd%jed,npz)  
     real, intent(in), optional :: delp_save(bd%isd:bd%ied,bd%jsd:bd%jed,npz)
     real, intent(inout) :: diss_est(bd%isd:bd%ied  ,bd%jsd:bd%jed  ,npz)  !< skeb dissipation estimate
 
@@ -252,6 +252,8 @@ contains
     real, intent(inout), dimension(bd%isd:bd%ied,bd%jsd:bd%jed,npz):: ua, va
 !The following 2 variables are for SA-3D-TKE (kyf) (modify for data structure)
     type(sa3dtke_type), intent(inout) :: sa3dtke_var
+!pdc_drib
+    type(pdc_tend_type), intent(in), optional :: pdc_tend  
 
     real, intent(inout):: q_con(bd%isd:, bd%jsd:, 1:)
 
@@ -275,7 +277,7 @@ contains
     real, dimension(bd%isd:bd%ied+1,bd%jsd:bd%jed,npz) :: vd_tend_int
     real, dimension(bd%is:bd%ie,npz+1) :: pe1, pe2
     real, dimension(bd%is:bd%ie+1,npz+1) :: pe3, pe4
-    real, dimension(bd%is:bd%ie) :: bc_int 
+    real, dimension(bd%is:bd%ie+1) :: bc_int 
 
 ! Auto 1D & 2D arrays:
     real, dimension(bd%isd:bd%ied,bd%jsd:bd%jed):: ws3, z_rat
@@ -329,9 +331,10 @@ contains
       jsd = bd%jsd
       jed = bd%jed
 
-    pdc = pdc_in .and. present(delp_save) .and. present(pt_tend) .and. present(u_tend) .and. present(v_tend)
+!    pdc = pdc_in .and. present(delp_save) .and. present(pt_tend) .and. present(u_tend) .and. present(v_tend)
+     pdc = pdc_in .and. present(delp_save) .and. present(pdc_tend)
     bc_int = 0.0
-
+    if (is_master()) print *,'pdc-dyncore',pdc
 #ifdef SW_DYNAMICS
     peln1 = 0.
 #else
@@ -577,18 +580,18 @@ contains
                                                      call timing_off('COMM_TOTAL')
 
     if(pdc)then
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,recip_k_split_n_split,pt_tend,delp_save,delp,pt)
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,recip_k_split_n_split,pdc_tend,delp_save,delp,pt)
       do k=1,npz
         do j=js,je
           do i=is,ie
-            pt(i,j,k) = pt(i,j,k) + recip_k_split_n_split*pt_tend(i,j,k)*delp_save(i,j,k)/delp(i,j,k)
+            pt(i,j,k) = pt(i,j,k) + recip_k_split_n_split*pdc_tend%pt(i,j,k)*delp_save(i,j,k)/delp(i,j,k)
           enddo
         enddo
       enddo
       call start_group_halo_update(i_pack(1), pt,   domain, complete=.true.)
 
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,u_tend,bc_int,ud_tend_int,&
-!$OMP                                  isd,ied,jsd,jed,v_tend,vd_tend_int,flagstruct) &
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,pdc_tend,bc_int,ud_tend_int,&
+!$OMP                                  isd,ied,jsd,jed,vd_tend_int,flagstruct) &
 !$OMP                           private(pe1,pe2,pe3,pe4)
       do j=js,je+1
         do i=is,ie
@@ -599,7 +602,7 @@ contains
             pe2(i,k) = pe2(i,k-1) + 0.5*(delp(i,j-1,k-1)+delp(i,j,k-1))
           enddo
         enddo
-        call map1_ppm(npz, pe1(is:ie,:), u_tend, bc_int, &
+        call map1_ppm(npz, pe1(is:ie,:), pdc_tend%u, bc_int(is:ie), &
                       npz, pe2(is:ie,:), ud_tend_int,           &
                       is, ie, j, isd, ied, jsd, jed+1, -1, flagstruct%kord_mt)
         if (j < je+1) then        ! Added   
@@ -611,7 +614,7 @@ contains
               pe4(i,k) = pe4(i,k-1) + 0.5*(delp(i-1,j,k-1)+delp(i,j,k-1))
             enddo
           enddo
-          call map1_ppm(npz, pe3, v_tend, bc_int, &
+          call map1_ppm(npz, pe3, pdc_tend%v, bc_int, &
                         npz, pe4, vd_tend_int,             &
                         is, ie+1, j, isd, ied+1, jsd, jed, -1, flagstruct%kord_mt)
         endif
@@ -634,7 +637,6 @@ contains
 
       call complete_group_halo_update(i_pack(1), domain)
       call complete_group_halo_update(i_pack(8), domain)
-
     endif
 
                                                      
