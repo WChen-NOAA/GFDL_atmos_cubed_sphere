@@ -579,65 +579,70 @@ contains
           call complete_group_halo_update(i_pack(7), domain)
                                                      call timing_off('COMM_TOTAL')
 
-    if(pdc)then
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,recip_k_split_n_split,pdc_tend,delp_save,delp,pt)
-      do k=1,npz
-        do j=js,je
-          do i=is,ie
-            pt(i,j,k) = pt(i,j,k) + recip_k_split_n_split*pdc_tend%pt(i,j,k)*delp_save(i,j,k)/delp(i,j,k)
-          enddo
-        enddo
-      enddo
-      call start_group_halo_update(i_pack(1), pt,   domain, complete=.true.)
-
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,pdc_tend,bc_int,ud_tend_int,&
-!$OMP                                  isd,ied,jsd,jed,vd_tend_int,flagstruct) &
-!$OMP                           private(pe1,pe2,pe3,pe4)
-      do j=js,je+1
-        do i=is,ie
-          pe1(i,1) = ptop
-          pe2(i,1) = ptop
-          do k=2,npz+1
-            pe1(i,k) = pe1(i,k-1) + 0.5*(delp_save(i,j-1,k-1)+delp_save(i,j,k-1))
-            pe2(i,k) = pe2(i,k-1) + 0.5*(delp(i,j-1,k-1)+delp(i,j,k-1))
-          enddo
-        enddo
-        call map1_ppm(npz, pe1(is:ie,:), pdc_tend%u, bc_int(is:ie), &
-                      npz, pe2(is:ie,:), ud_tend_int,           &
-                      is, ie, j, isd, ied, jsd, jed+1, -1, flagstruct%kord_mt)
-        if (j < je+1) then        ! Added   
-          do i=is,ie+1
-            pe3(i,1) = ptop
-            pe4(i,1) = ptop
-            do k=2,npz+1
-              pe3(i,k) = pe3(i,k-1) + 0.5*(delp_save(i-1,j,k-1)+delp_save(i,j,k-1))
-              pe4(i,k) = pe4(i,k-1) + 0.5*(delp(i-1,j,k-1)+delp(i,j,k-1))
-            enddo
-          enddo
-          call map1_ppm(npz, pe3, pdc_tend%v, bc_int, &
-                        npz, pe4, vd_tend_int,             &
-                        is, ie+1, j, isd, ied+1, jsd, jed, -1, flagstruct%kord_mt)
-        endif
-      enddo
-
-!$OMP parallel do default(none) shared(is,ie,js,je,u,flagstruct,recip_k_split_n_split,ud_tend_int,npz,v,vd_tend_int)
-        do k=1,npz
-          do j=js,je+1
-            do i=is,ie
-              u(i,j,k) = u(i,j,k) + recip_k_split_n_split*ud_tend_int(i,j,k)
-            enddo
-          enddo
-          do j=js,je
-            do i=is,ie+1
-              v(i,j,k) = v(i,j,k) + recip_k_split_n_split*vd_tend_int(i,j,k)
-            enddo
-          enddo
-        enddo
-      call start_group_halo_update(i_pack(8), u, v, domain, gridtype=DGRID_NE)
-
-      call complete_group_halo_update(i_pack(1), domain)
-      call complete_group_halo_update(i_pack(8), domain)
-    endif
+     if(pdc)then
+             call pdc_add_tend( is, ie, js, je, isd, ied, jsd, jed, npz, &
+                  ptop, pt, u, v, delp, domain,  flagstruct%kord_mt, recip_k_split_n_split, &
+                  delp_save, pdc_tend)
+     endif
+!    if(pdc)then
+!!$OMP parallel do default(none) shared(is,ie,js,je,npz,recip_k_split_n_split,pdc_tend,delp_save,delp,pt)
+!      do k=1,npz
+!        do j=js,je
+!          do i=is,ie
+!            pt(i,j,k) = pt(i,j,k) + recip_k_split_n_split*pdc_tend%pt(i,j,k)*delp_save(i,j,k)/delp(i,j,k)
+!          enddo
+!        enddo
+!      enddo
+!      call start_group_halo_update(i_pack(1), pt,   domain, complete=.true.)
+!
+!!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,pdc_tend,bc_int,ud_tend_int,&
+!!$OMP                                  isd,ied,jsd,jed,vd_tend_int,flagstruct) &
+!!$OMP                           private(pe1,pe2,pe3,pe4)
+!      do j=js,je+1
+!        do i=is,ie
+!          pe1(i,1) = ptop
+!          pe2(i,1) = ptop
+!          do k=2,npz+1
+!            pe1(i,k) = pe1(i,k-1) + 0.5*(delp_save(i,j-1,k-1)+delp_save(i,j,k-1))
+!            pe2(i,k) = pe2(i,k-1) + 0.5*(delp(i,j-1,k-1)+delp(i,j,k-1))
+!          enddo
+!        enddo
+!        call map1_ppm(npz, pe1(is:ie,:), pdc_tend%u, bc_int(is:ie), &
+!                      npz, pe2(is:ie,:), ud_tend_int,           &
+!                      is, ie, j, isd, ied, jsd, jed+1, -1, flagstruct%kord_mt)
+!        if (j < je+1) then        ! Added   
+!          do i=is,ie+1
+!            pe3(i,1) = ptop
+!            pe4(i,1) = ptop
+!            do k=2,npz+1
+!              pe3(i,k) = pe3(i,k-1) + 0.5*(delp_save(i-1,j,k-1)+delp_save(i,j,k-1))
+!              pe4(i,k) = pe4(i,k-1) + 0.5*(delp(i-1,j,k-1)+delp(i,j,k-1))
+!            enddo
+!          enddo
+!          call map1_ppm(npz, pe3, pdc_tend%v, bc_int, &
+!                        npz, pe4, vd_tend_int,             &
+!                        is, ie+1, j, isd, ied+1, jsd, jed, -1, flagstruct%kord_mt)
+!        endif
+!      enddo
+!
+!!$OMP parallel do default(none) shared(is,ie,js,je,u,flagstruct,recip_k_split_n_split,ud_tend_int,npz,v,vd_tend_int)
+!        do k=1,npz
+!          do j=js,je+1
+!            do i=is,ie
+!              u(i,j,k) = u(i,j,k) + recip_k_split_n_split*ud_tend_int(i,j,k)
+!            enddo
+!          enddo
+!          do j=js,je
+!            do i=is,ie+1
+!              v(i,j,k) = v(i,j,k) + recip_k_split_n_split*vd_tend_int(i,j,k)
+!            enddo
+!          enddo
+!        enddo
+!      call start_group_halo_update(i_pack(8), u, v, domain, gridtype=DGRID_NE)
+!
+!      call complete_group_halo_update(i_pack(1), domain)
+!      call complete_group_halo_update(i_pack(8), domain)
+!    endif
 
                                                      
                                                      call timing_on('c_sw')
@@ -3419,5 +3424,114 @@ do 1000 j=jfirst,jlast
 ! -------------------------------------------------
  return
  end subroutine molecular_diffusion_run
+ subroutine pdc_add_tend( is, ie, js, je, isd, ied, jsd, jed, npz, &
+     ptop, pt, u, v, delp, domain,  kord_mt, kxn_split, &
+      delp_save, pdc_tend)
+
+
+  ! Domain bounds and grid indices
+  integer, intent(in) :: is, ie, js, je, isd, ied, jsd, jed, npz
+  real,    intent(in) :: ptop, kxn_split
+
+  ! Infrastructure types
+  type(domain2d),     intent(inout) :: domain
+  integer, intent(in)    :: kord_mt
+
+  ! State and tendency variables
+  real, intent(inout) :: pt(isd:ied, jsd:jed, npz)
+  real, intent(inout) :: u(isd:ied, jsd:jed+1, npz)
+  real, intent(inout) :: v(isd:ied+1, jsd:jed, npz)
+  real, intent(in)    :: delp(isd:ied, jsd:jed, npz)
+  real, intent(in)    :: delp_save(isd:ied, jsd:jed, npz)
+
+  ! Tendencies
+  type(pdc_tend_type), intent(in) :: pdc_tend
+
+
+  ! PPM mapping work arrays
+  real :: bc_int(is:ie+1)
+  real :: ud_tend_int(isd:ied, jsd:jed+1, npz)
+  real :: vd_tend_int(isd:ied+1, jsd:jed, npz)
+  real, dimension(is:ie,npz+1) :: pe1, pe2
+  real, dimension(is:ie+1,npz+1) :: pe3, pe4
+  ! Local variables
+  integer :: i, j, k
+
+  !-------------------------------------------------------------------
+  ! 1. Apply temperature tendency & initiate halo update
+  !-------------------------------------------------------------------
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,kxn_split,pdc_tend,delp_save,delp,pt)
+  do k = 1, npz
+    do j = js, je
+      do i = is, ie
+        pt(i,j,k) = pt(i,j,k) + kxn_split * pdc_tend%pt(i,j,k) * delp_save(i,j,k) / delp(i,j,k)
+      enddo
+    enddo
+  enddo
+
+  call mpp_update_domains(pt, domain, complete=.true.)
+
+  !-------------------------------------------------------------------
+  ! 2. Vertical remap tendencies (PPM) to current pressure coordinate
+  !-------------------------------------------------------------------
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,pdc_tend,ud_tend_int, &
+!$OMP                                  isd,ied,jsd,jed,kord_mt) &
+!$OMP                           private(i,j,k,pe1,pe2,bc_int)
+  do j = js, je + 1
+    bc_int(is:ie) = 0.0
+    do i = is, ie
+      pe1(i,1) = ptop
+      pe2(i,1) = ptop
+      do k = 2, npz + 1
+        pe1(i,k) = pe1(i,k-1) + 0.5 * (delp_save(i,j-1,k-1) + delp_save(i,j,k-1))
+        pe2(i,k) = pe2(i,k-1) + 0.5 * (delp(i,j-1,k-1)      + delp(i,j,k-1))
+      enddo
+    enddo
+
+    call map1_ppm(npz, pe1(is:ie,:), pdc_tend%u, bc_int(is:ie), &
+                  npz, pe2(is:ie,:), ud_tend_int, &
+                  is, ie, j, isd, ied, jsd, jed+1, -1, kord_mt)
+  end do
+
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,ptop,delp_save,delp,pdc_tend, &
+!$OMP                                  isd,ied,jsd,jed,vd_tend_int,kord_mt) &
+!$OMP                           private(i,j,k,pe3,pe4,bc_int)
+    do j = js, je
+      bc_int(:) = 0.0
+      do i = is, ie + 1
+        pe3(i,1) = ptop
+        pe4(i,1) = ptop
+        do k = 2, npz + 1
+          pe3(i,k) = pe3(i,k-1) + 0.5 * (delp_save(i-1,j,k-1) + delp_save(i,j,k-1))
+          pe4(i,k) = pe4(i,k-1) + 0.5 * (delp(i-1,j,k-1)      + delp(i,j,k-1))
+        enddo
+      enddo
+
+      call map1_ppm(npz, pe3, pdc_tend%v, bc_int, &
+                    npz, pe4, vd_tend_int, &
+                    is, ie+1, j, isd, ied+1, jsd, jed, -1, kord_mt)
+  enddo
+
+  !-------------------------------------------------------------------
+  ! 3. Update velocity fields (u, v) and complete halo updates
+  !-------------------------------------------------------------------
+!$OMP parallel do default(none) shared(is,ie,js,je,u,kxn_split,ud_tend_int,npz,v,vd_tend_int)
+  do k = 1, npz
+    do j = js, je + 1
+      do i = is, ie
+        u(i,j,k) = u(i,j,k) + kxn_split * ud_tend_int(i,j,k)
+      enddo
+    enddo
+    do j = js, je
+      do i = is, ie + 1
+        v(i,j,k) = v(i,j,k) + kxn_split * vd_tend_int(i,j,k)
+      enddo
+    enddo
+  enddo
+
+  call mpp_update_domains(u, v, domain, gridtype=DGRID_NE)
+
+
+end subroutine pdc_add_tend
 
 end module dyn_core_mod
