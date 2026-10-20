@@ -327,7 +327,6 @@ contains
       jed = bd%jed
 
     pdc = pdc_in .and. present(delp_save) .and. present(pdc_tend)
-    
 #ifdef SW_DYNAMICS
     peln1 = 0.
 #else
