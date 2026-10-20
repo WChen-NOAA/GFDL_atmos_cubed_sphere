@@ -849,11 +849,7 @@ endif        ! end last_step check
        ! Output temperature if last_step
 !!!  if ( is_master() ) write(*,*) 'dtmp=', dtmp, nwat
 
-!    if(present(pt_save))then
      if (pdc_drib) then
-      if (is_master()) then
-              print *,'pdc_mapz',pdc_drib
-      endif
 !$OMP do
        do k=1,km
           do j=js,je

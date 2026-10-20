@@ -392,7 +392,7 @@ module fv_control_mod
      logical , pointer :: molecular_diffusion
      real,     pointer :: dz_min
      integer,  pointer :: psm_bc
-     logical,  pointer :: pdc_drib ! higher order physcis and dynamics coupling   
+     logical,  pointer :: pdc_drib ! higher order physcis and dynamics coupling (PDC) with tendency dribbling  
      integer , pointer :: a2b_ord
      integer , pointer :: c2l_ord
 

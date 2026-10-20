@@ -321,7 +321,6 @@ contains
       integer :: ierr
       real :: time_total
       integer :: seconds, days
-     
 
       real, dimension(:,:,:), pointer :: cappa
       real, dimension(:,:,:), pointer :: dp1
@@ -693,167 +692,14 @@ contains
        enddo
   endif
   if (pdc) then
-  call  pdc_get_tend(npz, is, ie, js, je, isd, ied, jsd, jed, nq, nwat,       &
-  sphum, liq_wat, ice_wat, rainwat, snowwat, graupel, hailwat, mdt, bdt, kappa,  &
-  zvir,flagstruct% moist_phys, rdg,  u, v, pt, delp, q, delz, pe, peln, pk, pkz, q_con,     &
+      call  pdc_get_tend(npz, is, ie, js, je, isd, ied, jsd, jed, nq, nwat,       &
+            sphum, liq_wat, ice_wat, rainwat, snowwat, graupel, hailwat, mdt, bdt, kappa,  &
+            zvir,flagstruct% moist_phys, rdg,  u, v, pt, delp, q, delz, pe, peln, pk, pkz, q_con,     &
 #ifdef MULTI_GASES
-  kapad,  &
+            kapad,  &
 #endif  
-  domain, cappa, pdc_save, pdc_tend)
+            domain, cappa, pdc_save, pdc_tend)
   endif
-!  if (pdc) then
-!!$OMP parallel do default(none) shared(is,ie,js,je,npz,nq,pdc_tend)
-!    do k=1,npz
-!      do j=js,je
-!        do i=is,ie
-!          pdc_tend%pt(i,j,k) = 0.
-!        enddo
-!      enddo
-!      do j=js,je+1
-!        do i=is,ie
-!          pdc_tend%u(i,j,k) = 0.
-!        enddo
-!      enddo
-!       do j=js,je
-!        do i=is,ie+1
-!          pdc_tend%v(i,j,k) = 0.
-!        enddo
-!      enddo
-!      do iq=1,nq
-!       do j=js,je
-!         do i=is,ie
-!            pdc_tend%q(i,j,k,iq) = 0.
-!          enddo
-!        enddo
-!      enddo
-!    enddo
-!  endif
-!  if (pdc) then
-!!$OMP parallel do default(none) shared(is,ie,js,je,npz,nq,pdc_tend,pt,pdc_save,delz,u,v,q,delp)
-!    do k=1,npz
-!      do j=js,je
-!        do i=is,ie
-!          pdc_tend%pt(i,j,k) = pt(i,j,k)-pdc_save%pt(i,j,k)
-!          pt(i,j,k) = pdc_save%pt(i,j,k)
-!          delz(i,j,k) = pdc_save%delz(i,j,k)
-!        enddo
-!      enddo
-!       do j=js,je+1
-!        do i=is,ie
-!          pdc_tend%u(i,j,k) = u(i,j,k)-pdc_save%u(i,j,k)
-!          u(i,j,k) = pdc_save%u(i,j,k)
-!        enddo
-!      enddo
-!      do j=js,je
-!        do i=is,ie+1
-!          pdc_tend%v(i,j,k) = v(i,j,k)-pdc_save%v(i,j,k)
-!          v(i,j,k) = pdc_save%v(i,j,k)
-!        enddo
-!      enddo
-!      do iq=1,nq
-!       do j=js,je
-!        do i=is,ie
-!            pdc_tend%q(i,j,k,iq) = (q(i,j,k,iq)*delp(i,j,k)/pdc_save%delp(i,j,k))-pdc_save%q(i,j,k,iq)
-!            q(i,j,k,iq) = pdc_save%q(i,j,k,iq)
-!        enddo
-!       enddo
-!      enddo
-!    enddo
-!
-!!$OMP parallel do default(none) shared(is,ie,js,je,npz,nq,pdc_save,delp,q,pdc_tend,mdt,bdt,nwat) &
-!!$OMP                           private(i,j,k,qwat,qt,q0)
-!    do k=1,npz
-!      do j=js,je
-!        do i=is,ie
-!          do iq=1,nq
-!            q(i,j,k,iq) = q(i,j,k,iq) + (mdt/bdt)*pdc_tend%q(i,j,k,iq)*pdc_save%delp(i,j,k)/delp(i,j,k)
-!          enddo
-!          qwat(1:nq) = delp(i,j,k)*q(i,j,k,1:nq)
-!          qt = sum(qwat(1:nwat))
-!          q0 = delp(i,j,k)*(1. - sum(q(i,j,k,1:nwat))) + qt
-!          delp(i,j,k) = q0
-!          pdc_save%delp(i,j,k) = delp(i,j,k)
-!          q(i,j,k,1:nq) = qwat(1:nq)/q0
-!        enddo
-!      enddo
-!    enddo
-!
-!    call timing_on('COMM_TOTAL')
-!    call start_group_halo_update(i_pack(1), pdc_save%delp, domain, complete=.false.)
-!    call start_group_halo_update(i_pack(1), pdc_tend%pt,   domain, complete=.true.)
-!    call start_group_halo_update(i_pack(8), pdc_tend%u, pdc_tend%v, domain, gridtype=DGRID_NE)
-!    call timing_off('COMM_TOTAL')
-!!$OMP parallel do default(none) shared(is,ie,js,je,npz,pe,delp,peln,pk,kappa)
-!    do j=js,je
-!      do k=2,npz+1
-!        do i=is,ie
-!          pe(i,k,j) = pe(i,k-1,j) + delp(i,j,k-1)
-!          peln(i,k,j) = log( pe(i,k,j) )
-!          pk(i,j,k) = exp( kappa*peln(i,k,j) )
-!        enddo
-!      enddo
-!    enddo
-!
-!!$OMP parallel do default(none) shared(is,ie,js,je,isd,ied,jsd,jed,npz,dp1,zvir,q,q_con,sphum,liq_wat, &
-!!$OMP                                  rainwat,ice_wat,snowwat,graupel,hailwat,pkz,flagstruct, &
-!#ifdef MULTI_GASES
-!!$OMP                                  kapad,                                          &
-!#endif
-!!$OMP                                  cappa,kappa,rdg,delp,pt,delz,nwat)              &
-!!$OMP                          private(cvm,i,j,k)
-!      do k=1,npz
-!        if ( flagstruct%moist_phys ) then
-!          do j=js,je
-!#ifdef MOIST_CAPPA
-!            call moist_cv(is,ie,isd,ied,jsd,jed, npz, j, k, nwat, sphum, liq_wat, rainwat,    &
-!                          ice_wat, snowwat, graupel, hailwat, q, q_con(is:ie,j,k), cvm)
-!#endif
-!            do i=is,ie
-!#ifdef MULTI_GASES
-!              dp1(i,j,k) = virq(q(i,j,k,:))-1.
-!              kapad(i,j,k)= kappa * (virqd(q(i,j,k,:))/vicpqd(q(i,j,k,:)))
-!#else
-!              dp1(i,j,k) = zvir*q(i,j,k,sphum)
-!#endif
-!
-!#ifdef MOIST_CAPPA
-!              cappa(i,j,k) = rdgas/(rdgas + cvm(i)/(1.+dp1(i,j,k)))
-!              pkz(i,j,k) = exp(cappa(i,j,k)*log(rdg(i,j,k)*delp(i,j,k)*pt(i,j,k)*    &
-!#ifdef MULTI_GASES
-!                          (1.+dp1(i,j,k))                  /delz(i,j,k)) )
-!#else
-!                          (1.+dp1(i,j,k))*(1.-q_con(i,j,k))/delz(i,j,k)) )
-!#endif
-!#else
-!              pkz(i,j,k) = exp( kappa*log(rdg(i,j,k)*delp(i,j,k)*pt(i,j,k)*    &
-!                          (1.+dp1(i,j,k))/delz(i,j,k)) )
-!! Using dry pressure for the definition of the virtual potential temperature
-!!              pkz(i,j,k) = exp( kappa*log(rdg*delp(i,j,k)*pt(i,j,k)*    &
-!!                                      (1.-q(i,j,k,sphum))/delz(i,j,k)) )
-!#endif
-!
-!            enddo
-!          enddo
-!        else
-!          do j=js,je
-!            do i=is,ie
-!                dp1(i,j,k) = 0.
-!#ifdef MULTI_GASES
-!                kapad(i,j,k)= kappa * (virqd(q(i,j,k,:))/vicpqd(q(i,j,k,:)))
-!                pkz(i,j,k) = exp(kapad(i,j,k)*log(rdg(i,j,k)*virqd(q(i,j,k,:))*delp(i,j,k)*pt(i,j,k)/delz(i,j,k)))
-!#else
-!                pkz(i,j,k) = exp(kappa*log(rdg(i,j,k)*delp(i,j,k)*pt(i,j,k)/delz(i,j,k)))
-!#endif
-!            enddo
-!          enddo
-!        endif
-!      enddo
-!
-!    call timing_on('COMM_TOTAL')
-!    call complete_group_halo_update(i_pack(1), domain)
-!    call complete_group_halo_update(i_pack(8), domain)
-!    call timing_off('COMM_TOTAL')
-!  endif !pdc changes
 
                                                   call timing_on('FV_DYN_LOOP')
   do n_map=1, k_split   ! first level of time-split
@@ -902,9 +748,9 @@ contains
 #endif
 
                                            call timing_on('DYN_CORE')
-       call dyn_core(npx, npy, npz, ng, sphum, nq, mdt, n_map, n_split, zvir, cp_air, akap, cappa, &
+      call dyn_core(npx, npy, npz, ng, sphum, nq, mdt, n_map, n_split, zvir, cp_air, akap, cappa, &
 #ifdef MULTI_GASES
-                     kapad, &
+                    kapad, &
 #endif 
                     grav_var_h, hydrostatic, &
                     u, v, w, delz, pt, q, delp, pe, pk, phis, ws, omga, ptop, pfull, ua, va,           &
@@ -914,7 +760,7 @@ contains
                     mfx, mfy, cx, cy, pkz, peln, q_con, ak, bk, ks, &
                     gridstruct, flagstruct, neststruct, idiag, bd, &
                     domain, n_map==1, i_pack, GFDL_interstitial%last_step, diss_est, &
-                    !pdc_drib
+!The following variables is for PDC
                     pdc, time_total=time_total, delp_save=pdc_save%delp, pdc_tend=pdc_tend)
                                            call timing_off('DYN_CORE')
     
